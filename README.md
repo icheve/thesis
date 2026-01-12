@@ -1,5 +1,7 @@
 Тема дипломной работы - Разработка нагруженного в режиме близкого к реальному времени конвейера данных поставки платёжной информации, с сохранением истории платежей (Development of an NRT (near real-time) data pipeline for the supply of payment information, while maintaining the payment history)
+
 Студент - Ичёв Евгений Вадимович
+
 Научный руководитель - Заигрин Вадим Валерьевич
 
 План работ:
