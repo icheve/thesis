@@ -1,0 +1,160 @@
+{
+  "__inputs": [],
+  "__requires": [
+    { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.0.0" },
+    { "type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0" }
+  ],
+  "annotations": { "list": [] },
+  "description": "NRT Payment Pipeline — основные метрики прототипа",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "short" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "list" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "expr": "sum(rate(kafka_topic_partition_current_offset{topic=\"payments.raw\"}[1m]))",
+          "legendFormat": "raw events/s",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(kafka_topic_partition_current_offset{topic=\"payments.processed\"}[1m]))",
+          "legendFormat": "processed events/s",
+          "refId": "B"
+        }
+      ],
+      "title": "Throughput (события/сек)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "short" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "list" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "expr": "sum(rate(kafka_topic_partition_current_offset{topic=\"payments.dlq\"}[1m]))",
+          "legendFormat": "DLQ (validation errors)/s",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(kafka_topic_partition_current_offset{topic=\"payments.late\"}[1m]))",
+          "legendFormat": "late events/s",
+          "refId": "B"
+        }
+      ],
+      "title": "Ошибки: DLQ и опоздавшие события",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "percentunit" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "id": 3,
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "list" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "expr": "sum(kafka_topic_partition_current_offset{topic=\"payments.dlq\"}) / clamp_min(sum(kafka_topic_partition_current_offset{topic=\"payments.raw\"}), 1)",
+          "legendFormat": "DLQ ratio (DLQ / raw)",
+          "refId": "A"
+        }
+      ],
+      "title": "DQ Error Rate (DLQ / raw)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "short" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "id": 4,
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "list" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "expr": "flink_jobmanager_job_numberOfCompletedCheckpoints{job_name=\"NRT_Payment_Pipeline\"}",
+          "legendFormat": "completed checkpoints",
+          "refId": "A"
+        },
+        {
+          "expr": "flink_jobmanager_job_numberOfFailedCheckpoints{job_name=\"NRT_Payment_Pipeline\"}",
+          "legendFormat": "failed checkpoints",
+          "refId": "B"
+        }
+      ],
+      "title": "Flink Checkpoints",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "short" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "id": 5,
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "list" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "expr": "sum by (topic) (kafka_consumergroup_lag{consumergroup=\"payment-pipeline-flink\",topic=~\"payments.*\"})",
+          "legendFormat": "lag — {{topic}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Kafka Consumer Lag (Flink)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "short" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "id": 6,
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "list" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "expr": "sum(kafka_topic_partition_current_offset{topic=~\"payments.*\"})",
+          "legendFormat": "total offsets",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(kafka_consumergroup_current_offset_sum{consumergroup=\"payment-pipeline-flink\"})",
+          "legendFormat": "flink consumed",
+          "refId": "B"
+        }
+      ],
+      "title": "Kafka Topic Offsets (всего vs потреблено)",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "tags": ["payments", "flink", "pipeline"],
+  "templating": { "list": [] },
+  "time": { "from": "now-30m", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "NRT Payment Pipeline",
+  "uid": "nrt-payment-pipeline",
+  "version": 1
+}

@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment files (use .env.example instead)
+.env
+.env.local
+*.env
+
+# Generated thesis documents (distribute as release artifacts)
+# *.docx
+# *.pptx
+*.pdf
+
+# Temporary extraction artifacts
+.tmp_*/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test output
+.pytest_cache/
+htmlcov/
+.coverage
+*.log
+
+# Flink checkpoints (local dev)
+/tmp/flink-checkpoints/
