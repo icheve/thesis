@@ -283,10 +283,10 @@ docker compose exec clickhouse clickhouse-client < infra/clickhouse/init.sql
 
 3. Запустить Flink с offset `earliest` для replay из Kafka:
 ```bash
-# В pipeline/main.py заменить KafkaOffsetsInitializer.latest()
-# на KafkaOffsetsInitializer.earliest() и пересобрать образ:
-docker compose build flink-jobmanager flink-taskmanager flink-job-submitter
-docker compose up -d flink-jobmanager flink-taskmanager flink-job-submitter
+# --start-offset earliest передаётся через FLINK_EXTRA_ARGS или submit-job.sh
+# При использовании submit-job.sh добавьте аргумент в команду запуска:
+docker compose run --rm flink-job-submitter \
+    python pipeline/main.py --start-offset earliest
 ```
 
 4. Дождаться обработки всего лога (consumer lag = 0).

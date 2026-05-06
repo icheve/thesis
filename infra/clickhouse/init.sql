@@ -6,10 +6,9 @@
 CREATE DATABASE IF NOT EXISTS payments;
 
 -- -----------------------------------------------------------
--- Пользователь для pipeline (dev-среда)
+-- Пользователь для pipeline создаётся скриптом 00-create-user.sh,
+-- который читает пароль из переменной окружения CLICKHOUSE_PIPELINE_PASSWORD.
 -- -----------------------------------------------------------
-CREATE USER IF NOT EXISTS pipeline_writer IDENTIFIED WITH plaintext_password BY 'pipeline_secret';
-GRANT INSERT, SELECT ON payments.* TO pipeline_writer;
 
 -- -----------------------------------------------------------
 -- Хранение текущего состояния платежа (ReplacingMergeTree)
@@ -34,10 +33,13 @@ CREATE TABLE IF NOT EXISTS payments.payment_current
     merchant_name       String,
     merchant_category   LowCardinality(String),
     card_token          String,
+    -- is_current всегда 1: актуальность гарантируется ReplacingMergeTree(version) + FINAL
     is_current          UInt8 DEFAULT 1
 )
 ENGINE = ReplacingMergeTree(version)
-PARTITION BY toYYYYMM(event_ts)
+-- PARTITION BY tuple(): нет партиционирования — необходимо, чтобы ReplacingMergeTree
+-- дедуплицировал платёж со сменой event_ts через границу партиции (payment апрель → май).
+PARTITION BY tuple()
 ORDER BY (payment_id, source_system)
 SETTINGS index_granularity = 8192;
 
@@ -76,7 +78,9 @@ CREATE TABLE IF NOT EXISTS payments.payment_history
 )
 ENGINE = ReplacingMergeTree(processed_at)
 PARTITION BY toYYYYMM(event_ts)
-ORDER BY (payment_id, version)
+-- source_system в ключе предотвращает схлопывание версий платежей с одинаковым payment_id
+-- из разных систем-источников.
+ORDER BY (payment_id, source_system, version)
 TTL toDate(event_ts) + INTERVAL 3 YEAR DELETE
 SETTINGS index_granularity = 8192;
 

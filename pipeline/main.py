@@ -135,7 +135,7 @@ class EventTimestampAssigner(TimestampAssigner):
 # Построение и запуск Flink job
 # ---------------------------------------------------------------------------
 
-def build_job(env: StreamExecutionEnvironment, parallelism: int):
+def build_job(env: StreamExecutionEnvironment, parallelism: int, start_offset: str = "latest"):
     """Строит топологию Flink DataStream."""
 
     env.set_parallelism(parallelism)
@@ -146,12 +146,17 @@ def build_job(env: StreamExecutionEnvironment, parallelism: int):
     env.get_checkpoint_config().set_max_concurrent_checkpoints(1)
 
     # --- Source: Kafka payments.raw ---
+    offsets = (
+        KafkaOffsetsInitializer.earliest()
+        if start_offset == "earliest"
+        else KafkaOffsetsInitializer.latest()
+    )
     kafka_source = (
         KafkaSource.builder()
         .set_bootstrap_servers(KafkaConfig.BOOTSTRAP_SERVERS)
         .set_topics(KafkaConfig.INPUT_TOPIC)
         .set_group_id(KafkaConfig.CONSUMER_GROUP)
-        .set_starting_offsets(KafkaOffsetsInitializer.latest())
+        .set_starting_offsets(offsets)
         .set_value_only_deserializer(SimpleStringSchema())
         .build()
     )
@@ -248,12 +253,19 @@ def main():
     parser = argparse.ArgumentParser(description="NRT Payment Pipeline — Flink Job")
     parser.add_argument("--parallelism", type=int, default=FlinkConfig.PARALLELISM)
     parser.add_argument("--profile", choices=["dev", "prod"], default="dev")
+    parser.add_argument(
+        "--start-offset",
+        choices=["latest", "earliest"],
+        default="latest",
+        help="Kafka starting offset: 'latest' (normal run) or 'earliest' (full replay from Kafka retention).",
+    )
     args = parser.parse_args()
 
     logger.info("Starting NRT Payment Pipeline job", extra={
         "parallelism": args.parallelism,
         "kafka_bootstrap": KafkaConfig.BOOTSTRAP_SERVERS,
         "input_topic": KafkaConfig.INPUT_TOPIC,
+        "start_offset": args.start_offset,
     })
 
     env = StreamExecutionEnvironment.get_execution_environment()
@@ -264,7 +276,7 @@ def main():
     else:
         env.set_parallelism(args.parallelism)
 
-    build_job(env, args.parallelism)
+    build_job(env, args.parallelism, args.start_offset)
 
     logger.info("Executing Flink job: %s", FlinkConfig.JOB_NAME)
     env.execute(FlinkConfig.JOB_NAME)

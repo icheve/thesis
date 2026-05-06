@@ -5,7 +5,10 @@ ScdMergerOperator — stateful ядро конвейера.
   - дедупликация по event_id (keyed state, TTL 24ч)
   - контентная дедупликация по хешу значимых полей
   - создание новой версии и закрытие предыдущей (effective_to)
-  - маршрутизация late arrivals в side output
+
+Примечание: маршрутизация late arrivals в side output отключена —
+Beam PyFlink runtime не поддерживает ctx.timer_service().
+Все события обрабатываются в основном потоке независимо от watermark.
 """
 
 from __future__ import annotations
@@ -29,11 +32,16 @@ from pipeline.models.payment_processed import PaymentHistoryRow, PaymentProcesse
 
 logger = logging.getLogger(__name__)
 
-# Поля, изменение которых означает новую версию платежа
+# Поля, изменение которых означает новую версию платежа.
+# Включает payment_id, merchant_id и currency_original для корректной
+# контентной дедупликации между источниками (см. ADR-004).
 _SIGNIFICANT_FIELDS = (
+    "payment_id",
     "status_normalized",
     "event_type",
     "amount_rub",
+    "merchant_id",
+    "currency_original",
 )
 
 
@@ -53,23 +61,26 @@ class ScdMergerOperator(KeyedProcessFunction):
     """
 
     def open(self, runtime_context: RuntimeContext) -> None:
-        ttl_config = (
+        # TTL только для processed_events: устаревшие event_id можно забыть через 24ч.
+        # current_version НЕ имеет TTL — платёж может не меняться больше суток,
+        # и state должен сохраняться бесконечно, иначе следующий update
+        # создаст version=1 снова и сломает историю.
+        dedup_ttl_config = (
             StateTtlConfig
             .new_builder(Time.hours(FlinkConfig.STATE_TTL_HOURS))
             .set_update_type(StateTtlConfig.UpdateType.OnCreateAndWrite)
             .build()
         )
 
-        # Состояние текущей (последней) версии платежа
+        # Состояние текущей (последней) версии платежа — без TTL
         current_desc = ValueStateDescriptor("current_version", Types.MAP(Types.STRING(), Types.STRING()))
-        current_desc.enable_time_to_live(ttl_config)
         self._current_state = runtime_context.get_state(current_desc)
 
-        # Множество обработанных event_id (дедупликация)
+        # Множество обработанных event_id (дедупликация) — TTL 24ч
         events_desc = MapStateDescriptor(
             "processed_events", Types.STRING(), Types.LONG()
         )
-        events_desc.enable_time_to_live(ttl_config)
+        events_desc.enable_time_to_live(dedup_ttl_config)
         self._processed_events = runtime_context.get_map_state(events_desc)
 
         # Метрики

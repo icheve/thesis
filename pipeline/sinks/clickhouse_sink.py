@@ -149,21 +149,21 @@ class ClickHouseSink:
             try:
                 self._writer.insert("payment_history", self._history_buffer)
                 logger.info("Flushed payment_history", extra={"rows": len(self._history_buffer)})
+                self._history_buffer.clear()
             except RuntimeError as exc:
                 logger.error("Failed to flush payment_history: %s", exc)
+                # Буфер НЕ очищается при ошибке: строки будут повторно отправлены
+                # после восстановления Flink из checkpoint (at-least-once + idempotent sink).
                 raise
-            finally:
-                self._history_buffer.clear()
 
         if self._current_buffer:
             try:
                 self._writer.insert("payment_current", self._current_buffer)
                 logger.info("Flushed payment_current", extra={"rows": len(self._current_buffer)})
+                self._current_buffer.clear()
             except RuntimeError as exc:
                 logger.error("Failed to flush payment_current: %s", exc)
                 raise
-            finally:
-                self._current_buffer.clear()
 
         self._last_flush_ts = time.monotonic()
 

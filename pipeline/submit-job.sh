@@ -7,5 +7,6 @@ flink run --jobmanager flink-jobmanager:8081 \
   -py /opt/flink/pipeline/main.py \
   -pyfs /opt/flink \
   -pyreq /opt/flink/pipeline/requirements.txt \
-  -p 2
+  -p "${FLINK_PARALLELISM:-2}" \
+  ${FLINK_JOB_ARGS:-}
 echo "Job submitted."

@@ -37,14 +37,14 @@ Flink хранит `MapState[event_id → ts]` и отбрасывает пов�
 |---------|----------|------------------|
 | L1 | Kafka idempotent producer | Повторную отправку одного producer'а в пределах сессии |
 | L2 | Flink `MapState[event_id]` (TTL 24h) | Повторы по `event_id` при перезапуске из checkpoint |
-| L3a | ClickHouse `ReplacingMergeTree(version)` | Повторный INSERT той же версии через sink retry |
+| L3a | ClickHouse `payment_current` `ReplacingMergeTree(version)` + `payment_history` `ReplacingMergeTree(processed_at)` | Повторный INSERT той же версии через sink retry |
 | L3b | Flink content hash (`_compute_field_hash`) | Разные `event_id`, но одинаковые значимые поля |
 
 ## Решение
 
 **Принята трёхуровневая стратегия.**
 
-Уровень L3b (контентный хэш) является ключевым нефункциональным требованием: источник может генерировать события с разными `event_id` при повторе (например, при таймауте HTTP-вызова). Хэш вычисляется по полям: `payment_id`, `status`, `amount`, `currency`, `merchant_id`, `event_type`.
+Уровень L3b (контентный хэш) является ключевым нефункциональным требованием: источник может генерировать события с разными `event_id` при повторе (например, при таймауте HTTP-вызова). Хэш вычисляется по полям: `payment_id`, `status_normalized`, `event_type`, `amount_rub`, `merchant_id`, `currency_original`.
 
 ### TTL для Flink MapState
 
