@@ -142,11 +142,12 @@ processed_events_state: MapState[event_id, timestamp]
 
 ### ClickHouseSink
 
-`RichSinkFunction` с батчевым накоплением:
-- Накапливает строки в памяти до `CLICKHOUSE_BATCH_SIZE` записей
-- Принудительно сбрасывает каждые `CLICKHOUSE_FLUSH_INTERVAL_MS` мс через scheduled timer
-- HTTP INSERT запрос к ClickHouse (JSONEachRow формат)
+`RichSinkFunction` с async-буферизацией:
+- `invoke()` только добавляет событие в in-memory буфер (non-blocking горячий путь)
+- Фоновый поток (`_flush_loop`) делает poll каждую секунду; при достижении `BATCH_SIZE=500` или `FLUSH_INTERVAL_MS=5000` мс — HTTP INSERT к ClickHouse (JSONEachRow формат)
 - Retry: экспоненциальный backoff, max 5 попыток; после исчерпания retries ошибка пробрасывается во Flink — job переходит в FAILED и перезапускается с последнего checkpoint
+- `close()` выполняет принудительный финальный flush перед завершением оператора
+- Разделение горячего пути (invoke) и I/O (фоновый поток) исключает блокировку Flink-слотов при HTTP-вставках; критично при parallelism > 4 (см. §9.3.8)
 
 ---
 

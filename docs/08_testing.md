@@ -350,7 +350,7 @@ SELECT version, status FROM payments.payment_history
 | FR-07: PII-маскирование | TC-A01 (payer_id — TODO, не реализовано; конвейер работает с токенами источника) |
 | FR-08: Late arrivals | TC-B07 (— xfail; маршрутизация отключена в Beam runtime) |
 | NFR-01: Latency ≤ 30s p99 | TC-C01 |
-| NFR-02: Throughput ≥ 200 ev/s (эфф. ёмкость ~480 ev/s, 1 TM) | TC-C02 |
+| NFR-02: Throughput ≥ 200 ev/s (1 TM ~480 ев/с; 2 TM ~500 ев/с p99=14 с после async-fix, TC-C06) | TC-C02, TC-C05, TC-C06, TC-C07 |
 | NFR-03: RTO ≤ 5min, RPO=0 | TC-C03 |
 
 ---
@@ -440,7 +440,7 @@ python tests/load_test.py --report \
 
 | Симптом | Причина | Действие |
 |---------|---------|---------|
-| Latency p99 > 30s | Consumer lag растёт | Увеличить parallelism Flink |
+| Latency p99 > 30s | Consumer lag растёт | Добавить 2-й TaskManager (parallelism=8): 2 TM → 500 ев/с, p99=14 с (TC-C06, async-sink уже применён). При нагрузке >520 ев/с — масштабировать ClickHouse (шардирование) |
 | Checkpoint duration > 25s | Большой state в RocksDB | Увеличить state backend memory |
 | CH INSERT errors | ClickHouse перегружен или недоступен | Проверить CH health, очередь буферов |
 | DLQ rate > 1% | Изменилась схема источника | Проанализировать error_code в DLQ |

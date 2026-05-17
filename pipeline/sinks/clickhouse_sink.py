@@ -122,7 +122,13 @@ class ClickHouseSink:
                 self._maybe_flush(force=False)
 
     def invoke(self, row: PaymentHistoryRow) -> None:
-        """Принимает строку истории, добавляет в оба буфера."""
+        """Принимает строку истории, добавляет в оба буфера.
+
+        Флаш намеренно не вызывается на горячем пути: синхронный INSERT
+        блокировал бы Flink-поток обработки и становился bottleneck при
+        высокой параллельности. Флаш выполняет фоновый поток (_background_flush_loop)
+        по времени и размеру буфера; финальный флаш — в close().
+        """
         if row.is_duplicate if hasattr(row, "is_duplicate") else False:
             return
 
@@ -133,8 +139,6 @@ class ClickHouseSink:
             # В payment_current записываем только последние версии (effective_to IS NULL)
             if row.effective_to is None:
                 self._current_buffer.append(_history_to_current_dict(row))
-
-            self._maybe_flush(force=False)
 
     def _maybe_flush(self, force: bool = False) -> None:
         elapsed_ms = (time.monotonic() - self._last_flush_ts) * 1000

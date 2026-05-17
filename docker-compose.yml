@@ -198,7 +198,43 @@ services:
       CLICKHOUSE_USER: pipeline_writer
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
     ports:
-      - "9250:9249"           # TM Prometheus (отдельный порт на хосте)
+      - "9250:9249"           # TM-1 Prometheus (отдельный порт на хосте)
+    volumes:
+      - ./pipeline:/opt/flink/pipeline:ro
+      - flink-checkpoints:/flink-checkpoints
+
+  # ──────────────────────────────────────────────────────────────
+  # Flink — TaskManager 2 (для TC-C04: горизонтальное масштабирование)
+  # ──────────────────────────────────────────────────────────────
+  flink-taskmanager-2:
+    build:
+      context: ./pipeline
+      dockerfile: Dockerfile
+    container_name: flink-taskmanager-2
+    depends_on: [flink-jobmanager]
+    restart: unless-stopped
+    networks: [pipeline]
+    command: taskmanager
+    user: root
+    entrypoint: ["/bin/bash", "-c", "chown -R flink:flink /flink-checkpoints && gosu flink /docker-entrypoint.sh taskmanager"]
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.numberOfTaskSlots: 4
+        taskmanager.memory.process.size: 2048m
+        state.backend: hashmap
+        state.checkpoint-storage: filesystem
+        state.checkpoints.dir: file:///flink-checkpoints
+        metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
+        metrics.reporter.prom.port: 9249
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: "8123"
+      CLICKHOUSE_DATABASE: payments
+      CLICKHOUSE_USER: pipeline_writer
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+    ports:
+      - "9251:9249"           # TM-2 Prometheus (отдельный порт на хосте)
     volumes:
       - ./pipeline:/opt/flink/pipeline:ro
       - flink-checkpoints:/flink-checkpoints
@@ -227,6 +263,7 @@ services:
       CLICKHOUSE_USER: pipeline_writer
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
       PYTHONPATH: /opt/flink
+      FLINK_PARALLELISM: "${FLINK_PARALLELISM:-8}"   # 2 TM × 4 слота = 8 по умолчанию; задайте FLINK_PARALLELISM=4 в .env для baseline (1 TM)
     volumes:
       - ./pipeline:/opt/flink/pipeline:ro
     entrypoint: ["/bin/bash", "/opt/flink/pipeline/submit-job.sh"]

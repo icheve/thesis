@@ -251,7 +251,8 @@ docker compose exec clickhouse clickhouse-client --query \
 python tests/load_test.py --scenario ramp --rps-start 200 --rps-peak 1000 --ramp-steps 3 --step-duration 120 --output results/load_report_ramp.json
 
 # SLA: e2e p99 ≤ 30 с до ~480 ev/s; при 1000 ev/s события буферизуются в Kafka
-# (горизонтальное масштабирование TaskManager восстанавливает SLA)
+# (async-буферизация sink применена; для нагрузки >480 ев/с — добавить 2-й TM (parallelism=8):
+#  2 TM → 500 ев/с, p99=14 с, SLA выполнен (TC-C06). При >520 ев/с — масштабировать ClickHouse.)
 ```
 
 ### Ежемесячно
