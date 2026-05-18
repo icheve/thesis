@@ -1,0 +1,356 @@
+version: "3.9"
+
+# =============================================================
+#  NRT Payment Pipeline — полная dev-инфраструктура
+#  Для запуска: docker compose up -d
+# =============================================================
+
+networks:
+  pipeline:
+    driver: bridge
+
+volumes:
+  kafka-data:
+  zookeeper-data:
+  clickhouse-data:
+  prometheus-data:
+  grafana-data:
+  flink-checkpoints:
+
+services:
+
+  # ──────────────────────────────────────────────────────────────
+  # ZooKeeper (используется Kafka в режиме классического кластера)
+  # ──────────────────────────────────────────────────────────────
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.1
+    container_name: zookeeper
+    networks: [pipeline]
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper
+
+  # ──────────────────────────────────────────────────────────────
+  # Apache Kafka
+  # ──────────────────────────────────────────────────────────────
+  kafka:
+    image: confluentinc/cp-kafka:7.6.1
+    container_name: kafka
+    depends_on: [zookeeper]
+    networks: [pipeline]
+    ports:
+      - "9092:9092"
+      - "29092:29092"        # для хоста (localhost)
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: "zookeeper:2181"
+      KAFKA_LISTENERS: "INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:29092"
+      KAFKA_ADVERTISED_LISTENERS: "INTERNAL://kafka:9092,EXTERNAL://localhost:29092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "INTERNAL"
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_NUM_PARTITIONS: 12
+      KAFKA_LOG_RETENTION_HOURS: 72
+      KAFKA_LOG_SEGMENT_BYTES: 268435456       # 256 MB
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      # Метрики через JMX
+      KAFKA_JMX_PORT: 9999
+      KAFKA_JMX_HOSTNAME: kafka
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "kafka:9092"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ──────────────────────────────────────────────────────────────
+  # Kafka UI (для ручного наблюдения и отладки)
+  # ──────────────────────────────────────────────────────────────
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    depends_on: [kafka]
+    networks: [pipeline]
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_METRICS_PORT: 9999
+      # Schema Registry не входит в dev-стенд (Avro — production-расширение)
+
+  # ──────────────────────────────────────────────────────────────
+  # Инициализация Kafka-топиков (однократный job)
+  # ──────────────────────────────────────────────────────────────
+  kafka-init:
+    image: confluentinc/cp-kafka:7.6.1
+    container_name: kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks: [pipeline]
+    volumes:
+      - ./infra/kafka/init-topics.sh:/init-topics.sh:ro
+    entrypoint: ["/bin/bash", "/init-topics.sh"]
+    restart: "no"
+
+  # ──────────────────────────────────────────────────────────────
+  # ClickHouse (хранилище)
+  # ──────────────────────────────────────────────────────────────
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.5
+    container_name: clickhouse
+    networks: [pipeline]
+    ports:
+      - "8123:8123"           # HTTP API
+      - "9000:9000"           # клиентский порт
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./infra/clickhouse/00-create-user.sh:/docker-entrypoint-initdb.d/00-create-user.sh:ro
+      - ./infra/clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    environment:
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+      CLICKHOUSE_PIPELINE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 10s
+      retries: 5
+
+  # ──────────────────────────────────────────────────────────────
+  # Flink — JobManager
+  # ──────────────────────────────────────────────────────────────
+  flink-jobmanager:
+    build:
+      context: ./pipeline
+      dockerfile: Dockerfile
+    container_name: flink-jobmanager
+    depends_on:
+      kafka:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    networks: [pipeline]
+    ports:
+      - "8082:8081"           # Flink Web UI
+      - "9249:9249"           # JMX Prometheus exporter
+    command: jobmanager
+    user: root
+    entrypoint: ["/bin/bash", "-c", "chown -R flink:flink /flink-checkpoints && gosu flink /docker-entrypoint.sh jobmanager"]
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        state.backend: hashmap
+        state.checkpoint-storage: filesystem
+        state.checkpoints.dir: file:///flink-checkpoints
+        execution.checkpointing.interval: 30000
+        execution.checkpointing.mode: AT_LEAST_ONCE
+        metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
+        metrics.reporter.prom.port: 9249
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: "8123"
+      CLICKHOUSE_DATABASE: payments
+      CLICKHOUSE_USER: pipeline_writer
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+    volumes:
+      - ./pipeline:/opt/flink/pipeline:ro
+      - flink-checkpoints:/flink-checkpoints
+
+  # ──────────────────────────────────────────────────────────────
+  # Flink — TaskManager
+  # ──────────────────────────────────────────────────────────────
+  flink-taskmanager:
+    build:
+      context: ./pipeline
+      dockerfile: Dockerfile
+    container_name: flink-taskmanager
+    depends_on: [flink-jobmanager]
+    restart: unless-stopped
+    networks: [pipeline]
+    command: taskmanager
+    user: root
+    entrypoint: ["/bin/bash", "-c", "chown -R flink:flink /flink-checkpoints && gosu flink /docker-entrypoint.sh taskmanager"]
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.numberOfTaskSlots: 4
+        taskmanager.memory.process.size: 2048m
+        state.backend: hashmap
+        state.checkpoint-storage: filesystem
+        state.checkpoints.dir: file:///flink-checkpoints
+        metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
+        metrics.reporter.prom.port: 9249
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: "8123"
+      CLICKHOUSE_DATABASE: payments
+      CLICKHOUSE_USER: pipeline_writer
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+    ports:
+      - "9250:9249"           # TM-1 Prometheus (отдельный порт на хосте)
+    volumes:
+      - ./pipeline:/opt/flink/pipeline:ro
+      - flink-checkpoints:/flink-checkpoints
+
+  # ──────────────────────────────────────────────────────────────
+  # Flink — TaskManager 2 (для TC-C04: горизонтальное масштабирование)
+  # ──────────────────────────────────────────────────────────────
+  flink-taskmanager-2:
+    build:
+      context: ./pipeline
+      dockerfile: Dockerfile
+    container_name: flink-taskmanager-2
+    depends_on: [flink-jobmanager]
+    restart: unless-stopped
+    networks: [pipeline]
+    command: taskmanager
+    user: root
+    entrypoint: ["/bin/bash", "-c", "chown -R flink:flink /flink-checkpoints && gosu flink /docker-entrypoint.sh taskmanager"]
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.numberOfTaskSlots: 4
+        taskmanager.memory.process.size: 2048m
+        state.backend: hashmap
+        state.checkpoint-storage: filesystem
+        state.checkpoints.dir: file:///flink-checkpoints
+        metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
+        metrics.reporter.prom.port: 9249
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: "8123"
+      CLICKHOUSE_DATABASE: payments
+      CLICKHOUSE_USER: pipeline_writer
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+    ports:
+      - "9251:9249"           # TM-2 Prometheus (отдельный порт на хосте)
+    volumes:
+      - ./pipeline:/opt/flink/pipeline:ro
+      - flink-checkpoints:/flink-checkpoints
+
+  # ──────────────────────────────────────────────────────────────
+  # Отправка PyFlink job (однократный job после старта кластера)
+  # ──────────────────────────────────────────────────────────────
+  flink-job-submitter:
+    build:
+      context: ./pipeline
+      dockerfile: Dockerfile
+    container_name: flink-job-submitter
+    depends_on:
+      flink-jobmanager:
+        condition: service_started
+      kafka-init:
+        condition: service_completed_successfully
+      clickhouse:
+        condition: service_healthy
+    networks: [pipeline]
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: "8123"
+      CLICKHOUSE_DATABASE: payments
+      CLICKHOUSE_USER: pipeline_writer
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      PYTHONPATH: /opt/flink
+      FLINK_PARALLELISM: "${FLINK_PARALLELISM:-8}"   # 2 TM × 4 слота = 8 по умолчанию; задайте FLINK_PARALLELISM=4 в .env для baseline (1 TM)
+    volumes:
+      - ./pipeline:/opt/flink/pipeline:ro
+    entrypoint: ["/bin/bash", "/opt/flink/pipeline/submit-job.sh"]
+    restart: "no"
+
+  # ──────────────────────────────────────────────────────────────
+  # Генератор тестовых данных (profile=daily, 200 событий/сек)
+  # ──────────────────────────────────────────────────────────────
+  generator:
+    build:
+      context: ./generator
+      dockerfile: Dockerfile
+    container_name: payment-generator
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    networks: [pipeline]
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    command: ["--profile", "daily", "--rate", "200", "--duration", "86400"]
+    profiles: ["load"]          # запускается только с --profile load
+
+  # ──────────────────────────────────────────────────────────────
+  # kafka-exporter → Prometheus
+  # ──────────────────────────────────────────────────────────────
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:latest
+    container_name: kafka-exporter
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: on-failure
+    networks: [pipeline]
+    ports:
+      - "9308:9308"
+    command:
+      - "--kafka.server=kafka:9092"
+      - "--kafka.version=3.7.0"
+
+  # ──────────────────────────────────────────────────────────────
+  # clickhouse-exporter → Prometheus
+  # ──────────────────────────────────────────────────────────────
+  clickhouse-exporter:
+    image: f1yegor/clickhouse-exporter:latest
+    container_name: clickhouse-exporter
+    depends_on: [clickhouse]
+    networks: [pipeline]
+    ports:
+      - "9116:9116"
+    environment:
+      CLICKHOUSE_URI: http://clickhouse:8123
+      user: default
+      password: ""
+
+  # ──────────────────────────────────────────────────────────────
+  # Prometheus
+  # ──────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    container_name: prometheus
+    depends_on: [kafka-exporter, clickhouse-exporter]
+    networks: [pipeline]
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=15d"
+      - "--web.enable-lifecycle"
+
+  # ──────────────────────────────────────────────────────────────
+  # Grafana
+  # ──────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana-oss:10.4.3
+    container_name: grafana
+    depends_on: [prometheus]
+    networks: [pipeline]
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: "admin_secret"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro

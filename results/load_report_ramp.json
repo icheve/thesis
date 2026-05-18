@@ -1,0 +1,48 @@
+{
+  "scenario": "ramp",
+  "start_time": "2026-05-07T08:47:34.697907+00:00",
+  "end_time": "2026-05-07T08:53:34.771202+00:00",
+  "total_events_sent": 207652,
+  "total_errors": 0,
+  "steps": [
+    {
+      "rps_target": 200,
+      "rps_actual": 198.2,
+      "duration_s": 120.0,
+      "events_sent": 23788,
+      "errors": 0,
+      "latencies_count": 23788
+    },
+    {
+      "rps_target": 600,
+      "rps_actual": 584.1,
+      "duration_s": 120.0,
+      "events_sent": 70102,
+      "errors": 0,
+      "latencies_count": 70102
+    },
+    {
+      "rps_target": 1000,
+      "rps_actual": 947.9,
+      "duration_s": 120.0,
+      "events_sent": 113762,
+      "errors": 0,
+      "latencies_count": 113762
+    }
+  ],
+  "prometheus_metrics": {
+    "e2e_latency_p99": 136.97,
+    "e2e_latency_p50": 134.5,
+    "consumer_lag_max": 8303.0,
+    "flink_checkpoint_duration_ms": 20323.0,
+    "events_per_sec": 420.00840016800345,
+    "dlq_rate_pct": 0.002118569259560044,
+    "ch_insert_errors": 0.0
+  },
+  "sla_passed": false,
+  "sla_details": {
+    "consumer_lag_recovering": false,
+    "consumer_lag_value": 8303,
+    "total_error_rate_lt_1pct": true
+  }
+}

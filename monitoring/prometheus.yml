@@ -1,0 +1,40 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    project: 'nrt-payment-pipeline'
+
+rule_files:
+  - 'alerts.yml'
+
+# alertmanager не входит в dev-стенд; алерты определены в alerts.yml для production
+
+scrape_configs:
+
+  # Flink JobManager
+  - job_name: 'flink-jobmanager'
+    static_configs:
+      - targets: ['flink-jobmanager:9249']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  # Flink TaskManagers
+  - job_name: 'flink-taskmanager'
+    static_configs:
+      - targets: ['flink-taskmanager:9249', 'flink-taskmanager-2:9249']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  # Kafka (через kafka-exporter)
+  - job_name: 'kafka-exporter'
+    static_configs:
+      - targets: ['kafka-exporter:9308']
+    scrape_interval: 15s
+
+  # ClickHouse (через clickhouse-exporter)
+  - job_name: 'clickhouse-exporter'
+    static_configs:
+      - targets: ['clickhouse-exporter:9116']
+    scrape_interval: 30s
+
+  # Pipeline custom metrics и dq-checks отключены (контейнеры отсутствуют в dev-стенде)

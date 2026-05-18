@@ -1,0 +1,33 @@
+{
+  "scenario": "baseline",
+  "start_time": "2026-05-15T21:16:22.350207+00:00",
+  "end_time": "2026-05-15T21:21:22.365615+00:00",
+  "total_events_sent": 146499,
+  "total_errors": 0,
+  "steps": [
+    {
+      "rps_target": 500.0,
+      "rps_actual": 488.3,
+      "duration_s": 300.0,
+      "events_sent": 146499,
+      "errors": 0,
+      "latencies_count": 146499
+    }
+  ],
+  "prometheus_metrics": {
+    "e2e_latency_p99": 14.0,
+    "e2e_latency_p50": 13.5,
+    "consumer_lag_max": 128.0,
+    "flink_checkpoint_duration_ms": 14727.0,
+    "events_per_sec": 438.9907141928316,
+    "dlq_rate_pct": null,
+    "ch_insert_errors": 0.0
+  },
+  "sla_passed": true,
+  "sla_details": {
+    "e2e_p99_le_30s": true,
+    "e2e_p99_value_s": 14.0,
+    "error_rate_lt_1pct": true,
+    "error_rate_value_pct": 0.0
+  }
+}

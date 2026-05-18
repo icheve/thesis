@@ -1,0 +1,146 @@
+groups:
+
+  - name: pipeline.latency
+    rules:
+
+      - alert: PipelineHighE2ELatency
+        expr: |
+          pipeline_e2e_latency_seconds > 30
+        for: 5m
+        labels:
+          severity: critical
+          team: data-platform
+        annotations:
+          summary: "NRT SLA нарушен: e2e latency gauge > 30s"
+          description: |
+            End-to-end latency (gauge) = {{ $value | humanizeDuration }}.
+            SLA = 30s. Метрика — gauge pipeline_e2e_latency_seconds (не histogram).
+            Проверьте consumer lag и Flink checkpoints.
+          runbook_url: "https://wiki/runbooks/pipeline-latency"
+
+      # [production] Метрика pipeline_processing_latency_ms_bucket не эмитится в прототипе.
+      # - alert: PipelineProcessingLatencyHigh
+      #   expr: |
+      #     histogram_quantile(0.99,
+      #       rate(pipeline_processing_latency_ms_bucket{stage="scd_merge"}[5m])
+      #     ) > 5000
+      #   for: 3m
+      #   labels:
+      #     severity: warning
+      #   annotations:
+      #     summary: "Высокая задержка в SCD Merge (p99 > 5s)"
+      #     description: "Stage scd_merge p99={{ $value }}ms. Возможно давление на state backend."
+
+  - name: pipeline.kafka
+    rules:
+
+      - alert: PipelineConsumerLagHigh
+        expr: |
+          sum by (consumer_group, topic) (kafka_consumergroup_lag)
+          > 10000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Kafka consumer lag > 10 000"
+          description: |
+            Group={{ $labels.consumer_group }}, topic={{ $labels.topic }},
+            lag={{ $value }}. Pipeline не успевает за потоком.
+
+      - alert: PipelineDLQGrowing
+        expr: kafka_consumergroup_lag{topic="payments.dlq"} > 0
+        for: 1m
+        labels:
+          severity: info
+        annotations:
+          summary: "DLQ consumer lag > 0 — в топик поступают невалидные события"
+          description: "Проверьте payments.dlq на наличие невалидных событий."
+
+      - alert: PipelineDLQQueueLarge
+        expr: |
+          sum(kafka_consumergroup_lag{topic="payments.dlq"}) > 100
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "DLQ queue > 100 сообщений в течение 15 минут"
+          description: "Накапливаются необработанные ошибки. Требуется ручной анализ DLQ."
+
+  - name: pipeline.clickhouse
+    rules:
+
+      - alert: PipelineClickHouseInsertErrors
+        expr: rate(clickhouse_insert_errors_total[2m]) > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Ошибки вставки в ClickHouse"
+          description: |
+            Таблица={{ $labels.table }}.
+            События могут теряться или накапливаться в буфере Flink.
+
+      # [production] Метрика clickhouse_insert_latency_ms_bucket не эмитится в прототипе.
+      # - alert: PipelineClickHouseInsertLatencyHigh
+      #   expr: |
+      #     histogram_quantile(0.99,
+      #       rate(clickhouse_insert_latency_ms_bucket[5m])
+      #     ) > 5000
+      #   for: 5m
+      #   labels:
+      #     severity: warning
+      #   annotations:
+      #     summary: "ClickHouse INSERT latency p99 > 5s"
+      #     description: "Возможна деградация ClickHouse или сетевые проблемы."
+
+  - name: pipeline.flink
+    rules:
+
+      # [production] Метрика pipeline_events_processed_total не эмитится в прототипе.
+      # Для диагностики стопа используйте kafka_consumergroup_lag и Flink Web UI.
+      # - alert: PipelineNoEvents
+      #   expr: rate(pipeline_events_processed_total[5m]) < 1
+      #   for: 5m
+      #   labels:
+      #     severity: critical
+      #   annotations:
+      #     summary: "Pipeline остановился — нет событий 5 минут"
+      #     description: |
+      #       Проверьте состояние Flink job и Kafka source.
+      #       Возможно падение Flink job или отсутствие событий в источнике.
+
+      - alert: PipelineFlinkCheckpointSlow
+        expr: flink_jobmanager_job_lastCheckpointDuration > 25000
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Flink checkpoint занимает > 25s (интервал 30s)"
+          description: |
+            Checkpoint duration={{ $value }}ms.
+            Риск пропуска checkpoint интервала. Проверьте RocksDB state size.
+
+      - alert: PipelineFlinkMemoryPressure
+        expr: |
+          (
+            flink_taskmanager_Status_JVM_Memory_Heap_Used
+            / flink_taskmanager_Status_JVM_Memory_Heap_Max
+          ) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Flink TaskManager JVM Heap > 80%"
+          description: "Риск OOM. Проверьте state size и настройте managed memory."
+
+  - name: pipeline.data_quality
+    rules:
+
+      # [production] Метрики dq_post_load_check_failures и dq_error_rate_percent
+      # не эмитируются в прототипе. DQ-проверки запускайте вручную:
+      # pytest tests/test_data_quality.py -v
+      #
+      # - alert: PipelineDQCheckFailed
+      #   expr: dq_post_load_check_failures > 0
+      # - alert: PipelineHighErrorRate
+      #   expr: dq_error_rate_percent > 1
